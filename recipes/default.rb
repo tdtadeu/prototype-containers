@@ -1,10 +1,20 @@
-def setup_containers
-  setup_docker_group
-  start_redis_container
+def setup_containers(users)
   create_data_directory
-  start_postgres_container
-  start_elasticsearch_container
+  setup_docker_group
+  start_redis_container(users)
+  start_postgres_container(users)
+  start_elasticsearch_container(users)
   print_next_instructions
+end
+
+def create_data_directory
+  directory "data" do
+    path "/data"
+    owner "999"
+    group "root"
+    mode "0700"
+    action :create
+  end
 end
 
 def setup_docker_group
@@ -15,50 +25,81 @@ def setup_docker_group
   end
 end
 
-def start_redis_container
-  execute "redis-container" do
-    command "docker run -d -i --name prototype-redis -t redis"
-    action :run
+def start_redis_container(users)
+  users.each do |user|
+    execute "redis-container" do
+      command "docker run -d -i --name prototype-redis -t redis"
+      user "vagrant"
+      group "docker"
+      action :run
+      ignore_failure true
+      not_if { File.exists?("/home/#{user}/.redis.semaphore") }
+    end
+
+    file "redis-semaphore" do
+      path "/home/#{user}/.redis.semaphore"
+      owner user
+      action :create_if_missing
+    end
   end
 end
 
-def create_data_directory
-  directory "/data" do
-    owner "vagrant"
-    group "vagrant"
-    mode "0755"
-    action :create
+def start_postgres_container(users)
+  users.each do |user|
+    execute "postres-container" do
+      command "docker run -d -i --name prototype-postgres -v /data:/var/lib/postgresql/data -t postgres"
+      user "vagrant"
+      group "docker"
+      ignore_failure true
+      not_if { File.exists?("/home/#{user}/.postgres.semaphore") }
+    end
+
+    file "postgres-semaphore" do
+      path "/home/#{user}/.postgres.semaphore"
+      owner user
+      action :create_if_missing
+    end
   end
 end
 
-def start_postgres_container
-  execute "postres-container" do
-    command "docker run -d -i --name prototype-postgres -v /data:/var/lib/postgresql/data -t postgres"
-    action :run
-  end
-end
+def start_elasticsearch_container(users)
+  users.each do |user|
+    execute "elasticsearch-container" do
+      command "docker run -d -i --name prototype-elasticsearch -v /data:/data dockerfile/elasticsearch /elasticsearch/bin/elasticsearch -Des.config=/elasticsearch/config/elasticsearch.yml"
+      user "vagrant"
+      group "docker"
+      action :run
+      ignore_failure true
+      not_if { File.exists?("/home/#{user}/.elasticsearch.semaphore") }
+    end
 
-def start_elasticsearch_container
-  execute "elasticsearch-container" do
-    command "docker run -d -i --name prototype-elasticsearch -v /data:/data dockerfile/elasticsearch /elasticsearch/bin/elasticsearch -Des.config=/elasticsearch/config/elasticsearch.yml"
-    action :run
+    file "elasticsearch-semaphore" do
+      path "/home/#{user}/.elasticsearch.semaphore"
+      owner user
+      action :create_if_missing
+    end
   end
 end
 
 def print_next_instructions
-  bash "echo-instructions" do
-    code <<-EOF
-      echo "#{"* "*80}\n"\
-           "Now that you have got all support containers up and running,\n"\
-           "Create an account at http://hub.docker.com and ask the team\n"\
-           "to add you to the project. Once you've done that, you should\n"\
-           "log in to your account \033[0;31min the VM\033[0m with the command:\n"\
-           "docker login\n"\
-           "Then, you can start the webserver by running the command:\n"\
-           "docker run -i --rm --name prototype --link prototype-elasticsearch:elasticsearch --link prototype-redis:redis --link prototype-postgres:postgres -p 3000:3000 -v $(pwd):/app -t azisaka/prototype\n"\
-           "Should you have any questions, ask away! Zisa is always on Slack :D"
+  log "string" do
+    message <<-EOF
+     \n
+\033[0m#{"* "*80}
+* Now that you have got all support containers up and running,
+* Create an account at \033[0;34mhttp://hub.docker.com \033[0mand ask the team
+* to add you to the project. Once you've done that, you should
+* log in to your account \033[1;31minside the VM \033[0mwith the command:
+* \033[1;37mdocker login
+\033[0m* Then, you can start the webserver by running the command:
+* \033[1;37mdocker run -i --rm --name prototype --link prototype-elasticsearch:elasticsearch --link prototype-redis:redis --link prototype-postgres:postgres -p 3000:3000 -v $(pwd):/app -t azisaka/prototype
+\033[0m* Should you have any questions, ask away! Zisa is always on Slack :D
+#{"* "*80}
     EOF
+    level :info
   end
 end
 
-setup_containers
+users = node[:containers][:users]
+
+setup_containers(users)
